@@ -19,6 +19,8 @@ elif [ -f "$HOME/.codex/skills/water-reminder/scripts/water_reminder.py" ]; then
   WATER_REMINDER_CLI="$HOME/.codex/skills/water-reminder/scripts/water_reminder.py"
 elif [ -f "$HOME/.claude/skills/water-reminder/scripts/water_reminder.py" ]; then
   WATER_REMINDER_CLI="$HOME/.claude/skills/water-reminder/scripts/water_reminder.py"
+elif [ -f "$HOME/.agents/skills/water-reminder/scripts/water_reminder.py" ]; then
+  WATER_REMINDER_CLI="$HOME/.agents/skills/water-reminder/scripts/water_reminder.py"
 else
   WATER_REMINDER_CLI="$(find "$HOME" -path '*/skills/water-reminder/scripts/water_reminder.py' -print -quit 2>/dev/null)"
 fi
