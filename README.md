@@ -9,13 +9,13 @@ The skill runs a small SQLite-backed CLI at the start of agent generations. When
 After pushing this repo to GitHub:
 
 ```bash
-npx skills add OWNER/REPO --skill water-reminder -g -a codex
+npx skills add afeefuddin/water-reminder-skill --skill water-reminder -g -a codex
 ```
 
 Or install from the direct GitHub path:
 
 ```bash
-npx skills add https://github.com/OWNER/REPO/tree/main/skills/water-reminder -g -a codex
+npx skills add https://github.com/afeefuddin/water-reminder-skill/tree/main/skills/water-reminder -g -a codex
 ```
 
 For other supported agents, replace `codex` with the target agent or omit `-a codex` and let the CLI prompt.
@@ -26,7 +26,7 @@ After pushing this repo to GitHub, install with:
 
 ```bash
 python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo OWNER/REPO \
+  --repo afeefuddin/water-reminder-skill \
   --path skills/water-reminder
 ```
 
@@ -37,7 +37,7 @@ Then restart Codex so the skill is picked up.
 The repo uses the standard `skills/<name>/SKILL.md` layout, so `skills.sh` can discover it:
 
 ```bash
-npx skills add OWNER/REPO --list
+npx skills add afeefuddin/water-reminder-skill --list
 ```
 
 ## Enforce On Every Codex Prompt
