@@ -1,4 +1,4 @@
-# Water Reminder Skill
+# Hydrate
 
 An installable agent skill that reminds you to drink water while working with agents.
 
@@ -9,13 +9,13 @@ The skill runs a small SQLite-backed CLI at the start of agent generations. When
 After pushing this repo to GitHub:
 
 ```bash
-npx skills add afeefuddin/water-reminder-skill --skill water-reminder -g -a codex
+npx skills add afeefuddin/hydrate --skill hydrate -g -a codex
 ```
 
 Or install from the direct GitHub path:
 
 ```bash
-npx skills add https://github.com/afeefuddin/water-reminder-skill/tree/main/skills/water-reminder -g -a codex
+npx skills add https://github.com/afeefuddin/hydrate/tree/main/skills/hydrate -g -a codex
 ```
 
 For other supported agents, replace `codex` with the target agent or omit `-a codex` and let the CLI prompt.
@@ -26,8 +26,8 @@ After pushing this repo to GitHub, install with:
 
 ```bash
 python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo afeefuddin/water-reminder-skill \
-  --path skills/water-reminder
+  --repo afeefuddin/hydrate \
+  --path skills/hydrate
 ```
 
 Then restart Codex so the skill is picked up.
@@ -37,7 +37,7 @@ Then restart Codex so the skill is picked up.
 The repo uses the standard `skills/<name>/SKILL.md` layout, so `skills.sh` can discover it:
 
 ```bash
-npx skills add afeefuddin/water-reminder-skill --list
+npx skills add afeefuddin/hydrate --list
 ```
 
 ## Enforce On Every Codex Prompt
@@ -54,7 +54,21 @@ Skill installation makes the skill available. To make Codex run the check at the
 At the start of every assistant turn, before working on the user's task, run:
 
 ```bash
-python3 "$HOME/.codex/skills/water-reminder/scripts/water_reminder.py" check --json
+if [ -n "$CODEX_HOME" ] && [ -f "$CODEX_HOME/skills/hydrate/scripts/hydrate.py" ]; then
+  HYDRATE_CLI="$CODEX_HOME/skills/hydrate/scripts/hydrate.py"
+elif [ -f "$HOME/.codex/skills/hydrate/scripts/hydrate.py" ]; then
+  HYDRATE_CLI="$HOME/.codex/skills/hydrate/scripts/hydrate.py"
+elif [ -f "$HOME/.claude/skills/hydrate/scripts/hydrate.py" ]; then
+  HYDRATE_CLI="$HOME/.claude/skills/hydrate/scripts/hydrate.py"
+elif [ -f "$HOME/.agents/skills/hydrate/scripts/hydrate.py" ]; then
+  HYDRATE_CLI="$HOME/.agents/skills/hydrate/scripts/hydrate.py"
+else
+  HYDRATE_CLI="$(find "$HOME" -path '*/skills/hydrate/scripts/hydrate.py' -print -quit 2>/dev/null)"
+fi
+
+if [ -n "$HYDRATE_CLI" ]; then
+  python3 "$HYDRATE_CLI" check --json
+fi
 ```
 
 If the command returns `"due": true`, prepend this exact short block to the user-facing response, then continue with the user's actual task:
@@ -72,7 +86,7 @@ If the command returns `"due": false`, do not mention hydration.
 If the user's message confirms they drank water, run this before continuing:
 
 ```bash
-python3 "$HOME/.codex/skills/water-reminder/scripts/water_reminder.py" drink --json
+python3 "$HYDRATE_CLI" drink --json
 ```
 
 If they provide an amount, pass it as `--amount <ml>`.
@@ -87,15 +101,15 @@ Restart Codex after editing `~/.codex/AGENTS.md`.
 The skill stores local state in:
 
 ```text
-~/.local/share/water-reminder/water-reminder.sqlite3
+~/.local/share/hydrate/hydrate.sqlite3
 ```
 
 Common settings:
 
 ```bash
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set timezone Asia/Kolkata
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set reminder_interval_minutes 120
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set default_drink_ml 400
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py config set timezone Asia/Kolkata
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py config set reminder_interval_minutes 120
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py config set default_drink_ml 400
 ```
 
 ## CLI
@@ -103,12 +117,12 @@ python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set defa
 Runtime commands:
 
 ```bash
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py init
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py check --json
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py drink --json
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py drink --amount 500 --json
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py status
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config list
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py init
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py check --json
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py drink --json
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py drink --amount 500 --json
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py status
+python3 ~/.agents/skills/hydrate/scripts/hydrate.py config list
 ```
 
 ## How It Works
@@ -132,8 +146,8 @@ Legacy settings from earlier versions are migrated or removed automatically:
 From the repo root:
 
 ```bash
-python3 -m py_compile skills/water-reminder/scripts/water_reminder.py
-python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/water-reminder
+python3 -m py_compile skills/hydrate/scripts/hydrate.py
+python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/hydrate
 ```
 
 The validator requires `PyYAML` in the Python environment.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SQLite-backed hydration reminder CLI for the water-reminder skill."""
+"""SQLite-backed hydration reminder CLI for the hydrate skill."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-DEFAULT_DB_PATH = Path("~/.local/share/water-reminder/water-reminder.sqlite3").expanduser()
+DEFAULT_DB_PATH = Path("~/.local/share/hydrate/hydrate.sqlite3").expanduser()
 
 DEFAULT_SETTINGS = {
     "timezone": "local",
@@ -33,8 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Manage hydration reminders.")
     parser.add_argument(
         "--db",
-        default=os.environ.get("WATER_REMINDER_DB", str(DEFAULT_DB_PATH)),
-        help="SQLite database path. Defaults to ~/.local/share/water-reminder/water-reminder.sqlite3.",
+        default=os.environ.get("HYDRATE_DB", os.environ.get("WATER_REMINDER_DB", str(DEFAULT_DB_PATH))),
+        help="SQLite database path. Defaults to ~/.local/share/hydrate/hydrate.sqlite3.",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
