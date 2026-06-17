@@ -40,6 +40,48 @@ The repo uses the standard `skills/<name>/SKILL.md` layout, so `skills.sh` can d
 npx skills add OWNER/REPO --list
 ```
 
+## Enforce On Every Codex Prompt
+
+Skill installation makes the skill available. To make Codex run the check at the start of every prompt, add this to your global Codex instructions file:
+
+```text
+~/.codex/AGENTS.md
+```
+
+````markdown
+# Global Hydration Check
+
+At the start of every assistant turn, before working on the user's task, run:
+
+```bash
+python3 "$HOME/.codex/skills/water-reminder/scripts/water_reminder.py" check --json
+```
+
+If the command returns `"due": true`, prepend this exact short block to the user-facing response, then continue with the user's actual task:
+
+```markdown
+# DRINK WATER NOW
+
+**Drink <suggested_amount_ml>ml water.**
+
+---
+```
+
+If the command returns `"due": false`, do not mention hydration.
+
+If the user's message confirms they drank water, run this before continuing:
+
+```bash
+python3 "$HOME/.codex/skills/water-reminder/scripts/water_reminder.py" drink --json
+```
+
+If they provide an amount, pass it as `--amount <ml>`.
+
+Keep hydration state isolated from the task: do not use it in reasoning, plans, code reviews, implementation choices, summaries, or final answers except for the short reminder block when due.
+````
+
+Restart Codex after editing `~/.codex/AGENTS.md`.
+
 ## Configure
 
 The skill stores local state in:
