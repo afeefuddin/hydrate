@@ -81,6 +81,7 @@ if [ "$command" = "config" ]; then
     get)
       config_key="${1:-}"
       [ -n "$config_key" ] || { echo "usage: hydrate.sh config get <key>" >&2; exit 2; }
+      shift
       ;;
     set)
       config_key="${1:-}"
@@ -89,6 +90,7 @@ if [ "$command" = "config" ]; then
         echo "usage: hydrate.sh config set <key> <value>" >&2
         exit 2
       }
+      shift 2
       ;;
     *)
       echo "unknown config command: $config_command" >&2
