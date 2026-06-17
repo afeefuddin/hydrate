@@ -1,0 +1,6 @@
+interface:
+  display_name: "Water Reminder"
+  short_description: "Persistent hydration reminders for agent work"
+  default_prompt: "Use $water-reminder to keep hydration reminders active during work."
+policy:
+  allow_implicit_invocation: true
