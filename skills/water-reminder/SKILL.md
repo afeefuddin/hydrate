@@ -1,6 +1,6 @@
 ---
 name: water-reminder
-description: Remind the user to drink water at fixed intervals during their configured work window. Use this skill at the start of every agent generation when installed globally, and when the user confirms they drank water, asks about hydration status, or wants to configure hydration reminders. Runs a bundled CLI backed by SQLite so reminders persist across tasks and agent sessions.
+description: Remind the user to drink water when the configured interval has elapsed since their last drink acknowledgment. Use this skill at the start of every agent generation when installed globally, and when the user confirms they drank water, asks about hydration status, or wants to configure hydration reminders. Runs a bundled CLI backed by SQLite so reminders persist across tasks and agent sessions.
 allowed-tools: Bash(python3:*), Bash(find:*)
 ---
 
@@ -42,7 +42,6 @@ If `due` is `true`, prepend exactly one short reminder block before solving the 
 # DRINK WATER NOW
 
 **Drink <suggested_amount_ml>ml water.**
-Progress: <actual_ml>ml / <target_ml>ml today.
 
 ---
 ```
@@ -83,7 +82,7 @@ For configuration changes:
 python3 "$WATER_REMINDER_CLI" config set <key> <value>
 ```
 
-Supported keys include `work_start`, `work_end`, `daily_target_ml`, `reminder_interval_minutes`, and `timezone`.
+Supported keys include `reminder_interval_minutes`, `default_drink_ml`, and `timezone`.
 
 ## Context Rules
 

@@ -1,8 +1,8 @@
 # Water Reminder Skill
 
-An installable agent skill that reminds you to drink water during your configured work window.
+An installable agent skill that reminds you to drink water while working with agents.
 
-The skill runs a small SQLite-backed CLI at the start of agent generations. When a reminder slot is due, the agent prepends a short reminder block before continuing the user's actual task. Once the user confirms they drank water, the CLI records it and suppresses reminders until the next slot.
+The skill runs a small SQLite-backed CLI at the start of agent generations. When the configured interval has elapsed since the last time the user acknowledged drinking water, the agent prepends a short reminder block before continuing the user's actual task. Once the user confirms they drank water, the CLI records it and suppresses reminders until the interval elapses again.
 
 ## Install With skills.sh
 
@@ -52,10 +52,8 @@ Common settings:
 
 ```bash
 python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set timezone Asia/Kolkata
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set work_start 09:00
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set work_end 18:00
-python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set daily_target_ml 2500
 python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set reminder_interval_minutes 120
+python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config set default_drink_ml 400
 ```
 
 ## CLI
@@ -73,16 +71,19 @@ python3 ~/.codex/skills/water-reminder/scripts/water_reminder.py config list
 
 ## How It Works
 
-The reminder logic uses fixed interval slots inside the configured work window. By default, the interval is 120 minutes.
+The reminder logic is intentionally simple. By default, the interval is 120 minutes.
 
 ```text
-slot_count = count of interval boundaries strictly inside work window
-suggested_amount_ml = ceil(daily_target_ml / slot_count)
+next_due_at = last_drink_acknowledged_at + reminder_interval_minutes
 ```
 
-A reminder becomes due on each interval boundary, for example 11:00, 13:00, 15:00, and 17:00 for a 09:00-18:00 work window with a 120-minute interval. Once due, the reminder remains pending and repeats until the user confirms they drank water.
+A reminder becomes due when the current time is at or after `next_due_at`. Once due, it remains pending and repeats on every generation until the user confirms they drank water.
 
-`minimum_interval_minutes` is accepted as a legacy alias for `reminder_interval_minutes`.
+Legacy settings from earlier versions are migrated or removed automatically:
+
+- `minimum_interval_minutes` becomes `reminder_interval_minutes`
+- `serving_ml` becomes `default_drink_ml`
+- `work_start`, `work_end`, and `daily_target_ml` are removed
 
 ## Validate Before Release
 

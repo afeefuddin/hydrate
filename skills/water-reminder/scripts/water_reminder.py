@@ -5,12 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sqlite3
 import sys
-from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -18,21 +16,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 DEFAULT_DB_PATH = Path("~/.local/share/water-reminder/water-reminder.sqlite3").expanduser()
 
 DEFAULT_SETTINGS = {
-    "work_start": "09:00",
-    "work_end": "18:00",
     "timezone": "local",
-    "daily_target_ml": "2500",
     "reminder_interval_minutes": "120",
+    "default_drink_ml": "400",
+}
+
+LEGACY_SETTING_ALIASES = {
+    "minimum_interval_minutes": "reminder_interval_minutes",
+    "serving_ml": "default_drink_ml",
 }
 
 CONFIRMATION_SOURCE = "agent-confirmation"
-
-
-@dataclass(frozen=True)
-class Window:
-    start: datetime
-    end: datetime
-    active: bool
 
 
 def parse_args() -> argparse.Namespace:
@@ -128,25 +122,28 @@ def initialize(conn: sqlite3.Connection) -> None:
 
 
 def migrate_settings(conn: sqlite3.Connection) -> None:
-    old_interval = conn.execute(
-        "SELECT value FROM settings WHERE key = 'minimum_interval_minutes'"
-    ).fetchone()
-    new_interval = conn.execute(
-        "SELECT value FROM settings WHERE key = 'reminder_interval_minutes'"
-    ).fetchone()
-    if old_interval and not new_interval:
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            ("reminder_interval_minutes", old_interval["value"]),
-        )
-    conn.execute("DELETE FROM settings WHERE key IN ('minimum_interval_minutes', 'serving_ml')")
+    for legacy_key, canonical_key in LEGACY_SETTING_ALIASES.items():
+        legacy = conn.execute(
+            "SELECT value FROM settings WHERE key = ?",
+            (legacy_key,),
+        ).fetchone()
+        canonical = conn.execute(
+            "SELECT value FROM settings WHERE key = ?",
+            (canonical_key,),
+        ).fetchone()
+        if legacy and not canonical:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?)",
+                (canonical_key, legacy["value"]),
+            )
+
+    obsolete_keys = tuple(LEGACY_SETTING_ALIASES.keys()) + ("work_start", "work_end", "daily_target_ml")
+    placeholders = ", ".join("?" for _ in obsolete_keys)
+    conn.execute(f"DELETE FROM settings WHERE key IN ({placeholders})", obsolete_keys)
 
 
 def migrate_drink_events(conn: sqlite3.Connection) -> None:
-    columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(drink_events)")
-    }
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(drink_events)")}
     if "drank_at_epoch" not in columns:
         conn.execute("ALTER TABLE drink_events ADD COLUMN drank_at_epoch INTEGER")
 
@@ -180,14 +177,6 @@ def set_state(conn: sqlite3.Connection, key: str, value: str | None) -> None:
         )
 
 
-def parse_local_time(value: str, key: str) -> time:
-    try:
-        hour, minute = value.split(":", 1)
-        return time(int(hour), int(minute))
-    except ValueError as exc:
-        raise SystemExit(f"{key} must use HH:MM format") from exc
-
-
 def parse_positive_int(raw: str, key: str) -> int:
     try:
         value = int(raw)
@@ -211,35 +200,8 @@ def configured_zone(raw: str):
         raise SystemExit(f"Unknown timezone: {raw}") from exc
 
 
-def parse_now(raw: str | None, tz) -> datetime:
-    if not raw:
-        return datetime.now(tz)
-    parsed = datetime.fromisoformat(raw)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=tz)
-    return parsed.astimezone(tz)
-
-
-def work_window(cfg: dict[str, str], now: datetime) -> Window:
-    start_t = parse_local_time(cfg["work_start"], "work_start")
-    end_t = parse_local_time(cfg["work_end"], "work_end")
-
-    start = datetime.combine(now.date(), start_t, tzinfo=now.tzinfo)
-    end = datetime.combine(now.date(), end_t, tzinfo=now.tzinfo)
-    if end <= start:
-        end += timedelta(days=1)
-        if now < start:
-            start -= timedelta(days=1)
-            end -= timedelta(days=1)
-
-    if now < start:
-        previous_start = start - timedelta(days=1)
-        previous_end = end - timedelta(days=1)
-        if previous_start <= now < previous_end:
-            return Window(previous_start, previous_end, True)
-        return Window(start, end, False)
-
-    return Window(start, end, start <= now < end)
+def now_in_zone(cfg: dict[str, str]) -> datetime:
+    return datetime.now(configured_zone(cfg["timezone"]))
 
 
 def iso(dt: datetime) -> str:
@@ -250,159 +212,52 @@ def epoch(dt: datetime) -> int:
     return int(dt.timestamp())
 
 
-def event_sum(conn: sqlite3.Connection, start: datetime, end: datetime) -> int:
-    row = conn.execute(
-        "SELECT COALESCE(SUM(amount_ml), 0) AS total FROM drink_events WHERE drank_at_epoch >= ? AND drank_at_epoch <= ?",
-        (epoch(start), epoch(end)),
+def last_drink(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT drank_at, drank_at_epoch, amount_ml FROM drink_events ORDER BY drank_at_epoch DESC LIMIT 1"
     ).fetchone()
-    return int(row["total"])
-
-
-def last_drink_at(conn: sqlite3.Connection, start: datetime, end: datetime) -> datetime | None:
-    row = conn.execute(
-        "SELECT drank_at FROM drink_events WHERE drank_at_epoch >= ? AND drank_at_epoch <= ? ORDER BY drank_at_epoch DESC LIMIT 1",
-        (epoch(start), epoch(end)),
-    ).fetchone()
-    if not row:
-        return None
-    return datetime.fromisoformat(row["drank_at"])
 
 
 def clear_pending(conn: sqlite3.Connection) -> None:
-    for key in (
-        "pending",
-        "pending_since",
-        "suggested_amount_ml",
-        "last_reminder_at",
-        "pending_slot",
-        "pending_due_at",
-    ):
+    for key in ("pending", "pending_since", "suggested_amount_ml", "last_reminder_at"):
         set_state(conn, key, None)
 
 
-def reset_if_new_window(conn: sqlite3.Connection, win: Window) -> None:
-    current_window_id = iso(win.start)
-    current = state(conn).get("window_start")
-    if current != current_window_id:
-        clear_pending(conn)
-        set_state(conn, "window_start", current_window_id)
-        conn.commit()
-
-
-def reset_window_if_needed(conn: sqlite3.Connection, cfg: dict[str, str], now: datetime) -> Window:
-    win = work_window(cfg, now)
-    reset_if_new_window(conn, win)
-    return win
-
-
-def base_payload(conn: sqlite3.Connection, cfg: dict[str, str], now: datetime, win: Window | None = None) -> dict:
-    if win is None:
-        win = work_window(cfg, now)
-    target = parse_positive_int(cfg["daily_target_ml"], "daily_target_ml")
-    interval = parse_positive_int(cfg["reminder_interval_minutes"], "reminder_interval_minutes")
-    actual = event_sum(conn, win.start, min(now, win.end))
-    remaining = max(target - actual, 0)
-    schedule = reminder_schedule(target, interval, win, now)
+def base_payload(conn: sqlite3.Connection, cfg: dict[str, str], now: datetime) -> dict:
+    interval_minutes = parse_positive_int(
+        cfg["reminder_interval_minutes"],
+        "reminder_interval_minutes",
+    )
+    default_amount = parse_positive_int(cfg["default_drink_ml"], "default_drink_ml")
+    last = last_drink(conn)
+    last_drank_at = datetime.fromisoformat(last["drank_at"]) if last else None
+    next_due_at = (last_drank_at + timedelta(minutes=interval_minutes)) if last_drank_at else now
+    seconds_until_due = int((next_due_at - now).total_seconds())
 
     return {
         "now": iso(now),
-        "window": {
-            "start": iso(win.start),
-            "end": iso(win.end),
-            "active": win.active,
-        },
         "settings": {
-            "daily_target_ml": target,
-            "suggested_amount_ml": schedule["suggested_amount_ml"],
-            "reminder_interval_minutes": interval,
-            "work_start": cfg["work_start"],
-            "work_end": cfg["work_end"],
             "timezone": cfg["timezone"],
+            "reminder_interval_minutes": interval_minutes,
+            "default_drink_ml": default_amount,
         },
-        "progress": {
-            "actual_ml": actual,
-            "target_ml": target,
-            "remaining_ml": remaining,
-            "expected_ml": schedule["expected_ml"],
-            "gap_ml": max(schedule["expected_ml"] - actual, 0),
+        "last_drink": {
+            "drank_at": iso(last_drank_at) if last_drank_at else None,
+            "amount_ml": int(last["amount_ml"]) if last else None,
         },
-        "schedule": {
-            "slot_count": schedule["slot_count"],
-            "current_slot": schedule["current_slot"],
-            "suggested_amount_ml": schedule["suggested_amount_ml"],
-            "current_slot_due_at": iso(schedule["current_slot_due_at"]) if schedule["current_slot_due_at"] else None,
-            "next_slot_due_at": iso(schedule["next_slot_due_at"]) if schedule["next_slot_due_at"] else None,
-        },
+        "next_due_at": iso(next_due_at),
+        "seconds_until_due": max(seconds_until_due, 0),
     }
-
-
-def reminder_schedule(target_ml: int, interval_minutes: int, win: Window, now: datetime) -> dict:
-    interval = timedelta(minutes=interval_minutes)
-    due_times = slot_due_times(win, interval)
-    slot_count = len(due_times)
-    suggested_amount = max(1, math.ceil(target_ml / slot_count))
-
-    current_slot = sum(1 for due_at in due_times if now >= due_at)
-    if current_slot <= 0:
-        current_due_at = None
-    else:
-        current_due_at = due_times[current_slot - 1]
-
-    if current_slot < slot_count:
-        next_due_at = due_times[current_slot]
-    else:
-        next_due_at = None
-
-    return {
-        "slot_count": slot_count,
-        "current_slot": current_slot,
-        "suggested_amount_ml": suggested_amount,
-        "current_slot_due_at": current_due_at,
-        "next_slot_due_at": next_due_at,
-        "expected_ml": min(target_ml, suggested_amount * current_slot),
-    }
-
-
-def slot_due_times(win: Window, interval: timedelta) -> list[datetime]:
-    due_times = []
-    due_at = win.start + interval
-    while due_at < win.end:
-        due_times.append(due_at)
-        due_at += interval
-
-    if not due_times:
-        due_times.append(win.start + ((win.end - win.start) / 2))
-
-    return due_times
-
-
-def slot_already_confirmed(conn: sqlite3.Connection, win: Window, now: datetime, due_at: datetime) -> bool:
-    latest_drink = last_drink_at(conn, win.start, min(now, win.end))
-    return latest_drink is not None and latest_drink >= due_at
 
 
 def check(conn: sqlite3.Connection, now: datetime) -> dict:
     cfg = settings(conn)
-    win = reset_window_if_needed(conn, cfg, now)
-    payload = base_payload(conn, cfg, now, win)
+    payload = base_payload(conn, cfg, now)
     st = state(conn)
-
-    if not payload["window"]["active"]:
-        clear_pending(conn)
-        conn.commit()
-        payload.update(
-            {
-                "due": False,
-                "reason": "outside_work_window",
-                "suggested_amount_ml": 0,
-                "message": "",
-            }
-        )
-        return payload
 
     if st.get("pending") == "true":
         suggested = parse_positive_int(
-            st.get("suggested_amount_ml", str(payload["schedule"]["suggested_amount_ml"])),
+            st.get("suggested_amount_ml", str(payload["settings"]["default_drink_ml"])),
             "suggested_amount_ml",
         )
         set_state(conn, "last_reminder_at", iso(now))
@@ -417,41 +272,29 @@ def check(conn: sqlite3.Connection, now: datetime) -> dict:
         )
         return payload
 
-    serving = payload["schedule"]["suggested_amount_ml"]
-    remaining = payload["progress"]["remaining_ml"]
-    due_at_raw = payload["schedule"]["current_slot_due_at"]
-    due_at = datetime.fromisoformat(due_at_raw) if due_at_raw else None
-    due = (
-        remaining > 0
-        and due_at is not None
-        and now >= due_at
-        and not slot_already_confirmed(conn, win, now, due_at)
-    )
-
+    due = payload["seconds_until_due"] <= 0
     if not due:
         payload.update(
             {
                 "due": False,
-                "reason": "waiting_for_next_slot",
+                "reason": "waiting_for_interval",
                 "suggested_amount_ml": 0,
                 "message": "",
             }
         )
         return payload
 
-    suggested = min(serving, remaining)
+    suggested = payload["settings"]["default_drink_ml"]
     set_state(conn, "pending", "true")
     set_state(conn, "pending_since", iso(now))
     set_state(conn, "last_reminder_at", iso(now))
     set_state(conn, "suggested_amount_ml", str(suggested))
-    set_state(conn, "pending_slot", str(payload["schedule"]["current_slot"]))
-    set_state(conn, "pending_due_at", due_at_raw)
     conn.commit()
 
     payload.update(
         {
             "due": True,
-            "reason": "scheduled_interval_due",
+            "reason": "interval_elapsed",
             "suggested_amount_ml": suggested,
             "message": f"DRINK WATER NOW: {suggested}ml",
         }
@@ -461,10 +304,9 @@ def check(conn: sqlite3.Connection, now: datetime) -> dict:
 
 def drink(conn: sqlite3.Connection, now: datetime, amount: int | None) -> dict:
     cfg = settings(conn)
-    reset_window_if_needed(conn, cfg, now)
     st = state(conn)
-    payload = base_payload(conn, cfg, now)
-    suggested = int(st.get("suggested_amount_ml", payload["schedule"]["suggested_amount_ml"]))
+    fallback_amount = parse_positive_int(cfg["default_drink_ml"], "default_drink_ml")
+    suggested = int(st.get("suggested_amount_ml", fallback_amount))
     consumed = amount if amount is not None else suggested
     if consumed <= 0:
         raise SystemExit("amount must be greater than zero")
@@ -477,6 +319,7 @@ def drink(conn: sqlite3.Connection, now: datetime, amount: int | None) -> dict:
     set_state(conn, "last_drink_at", iso(now))
     conn.commit()
 
+    payload = base_payload(conn, cfg, now)
     payload.update(
         {
             "recorded": True,
@@ -501,9 +344,7 @@ def status(conn: sqlite3.Connection, now: datetime) -> dict:
 
 
 def normalize_setting_key(key: str) -> str:
-    if key == "minimum_interval_minutes":
-        return "reminder_interval_minutes"
-    return key
+    return LEGACY_SETTING_ALIASES.get(key, key)
 
 
 def validate_setting(key: str, value: str) -> tuple[str, str]:
@@ -511,9 +352,7 @@ def validate_setting(key: str, value: str) -> tuple[str, str]:
     if key not in DEFAULT_SETTINGS:
         allowed = ", ".join(sorted(DEFAULT_SETTINGS))
         raise SystemExit(f"Unknown setting '{key}'. Allowed: {allowed}")
-    if key in ("work_start", "work_end"):
-        parse_local_time(value, key)
-    if key in ("daily_target_ml", "reminder_interval_minutes"):
+    if key in ("reminder_interval_minutes", "default_drink_ml"):
         parse_positive_int(value, key)
     if key == "timezone" and value != "local":
         configured_zone(value)
@@ -526,21 +365,18 @@ def write_json(payload: dict) -> None:
 
 def print_check(payload: dict) -> None:
     if payload["due"]:
-        progress = payload["progress"]
         print(f"DRINK WATER NOW: {payload['suggested_amount_ml']}ml")
-        print(f"Progress: {progress['actual_ml']}ml / {progress['target_ml']}ml today")
     else:
-        print(f"No reminder due ({payload['reason']}).")
+        minutes = max(1, payload["seconds_until_due"] // 60)
+        print(f"No reminder due. Next reminder in about {minutes} minute(s).")
 
 
 def print_status(payload: dict) -> None:
-    progress = payload["progress"]
-    win = payload["window"]
+    last = payload["last_drink"]
     pending = "yes" if payload["pending"] else "no"
-    print(f"Progress: {progress['actual_ml']}ml / {progress['target_ml']}ml today")
-    print(f"Expected now: {progress['expected_ml']}ml")
-    print(f"Remaining: {progress['remaining_ml']}ml")
-    print(f"Work window: {win['start']} to {win['end']} (active: {win['active']})")
+    last_text = last["drank_at"] or "never"
+    print(f"Last drink: {last_text}")
+    print(f"Next reminder: {payload['next_due_at']}")
     print(f"Pending reminder: {pending}")
 
 
@@ -549,8 +385,7 @@ def main() -> int:
 
     conn = connect(args.db)
     cfg = settings(conn)
-    tz = configured_zone(cfg["timezone"])
-    now = parse_now(None, tz)
+    now = now_in_zone(cfg)
 
     if args.command == "init":
         payload = {"initialized": True, "db": str(Path(args.db).expanduser())}
