@@ -4,7 +4,23 @@ An installable Codex skill that reminds you to drink water during your configure
 
 The skill runs a small SQLite-backed CLI at the start of agent generations. When hydration is due, the agent prepends a short reminder block before continuing the user's actual task. Once the user confirms they drank water, the CLI records it and suppresses reminders until the next due window.
 
-## Install
+## Install With skills.sh
+
+After pushing this repo to GitHub:
+
+```bash
+npx skills add OWNER/REPO --skill water-reminder -g -a codex
+```
+
+Or install from the direct GitHub path:
+
+```bash
+npx skills add https://github.com/OWNER/REPO/tree/main/skills/water-reminder -g -a codex
+```
+
+For other supported agents, replace `codex` with the target agent or omit `-a codex` and let the CLI prompt.
+
+## Install With Codex Skill Installer
 
 After pushing this repo to GitHub, install with:
 
@@ -15,6 +31,14 @@ python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-githu
 ```
 
 Then restart Codex so the skill is picked up.
+
+## Discoverability
+
+The repo uses the standard `skills/<name>/SKILL.md` layout, so `skills.sh` can discover it:
+
+```bash
+npx skills add OWNER/REPO --list
+```
 
 ## Configure
 
