@@ -2,7 +2,7 @@
 
 An installable agent skill that reminds you to drink water while working with agents.
 
-The skill runs a small SQLite-backed CLI at the start of agent generations. When the configured interval has elapsed since the last time the user acknowledged drinking water, the agent prepends a short reminder block before continuing the user's actual task. Once the user confirms they drank water, the CLI records it and suppresses reminders until the interval elapses again.
+The skill runs a small shell CLI at the start of agent generations. When the configured interval has elapsed since the last time the user acknowledged drinking water, the agent prepends a short reminder block before continuing the user's actual task. Once the user confirms they drank water, the CLI records it in a local state file and suppresses reminders until the interval elapses again.
 
 ## Install With skills.sh
 
@@ -54,20 +54,20 @@ Skill installation makes the skill available. To make Codex run the check at the
 At the start of every assistant turn, before working on the user's task, run:
 
 ```bash
-if [ -n "$CODEX_HOME" ] && [ -f "$CODEX_HOME/skills/hydrate/scripts/hydrate.py" ]; then
-  HYDRATE_CLI="$CODEX_HOME/skills/hydrate/scripts/hydrate.py"
-elif [ -f "$HOME/.codex/skills/hydrate/scripts/hydrate.py" ]; then
-  HYDRATE_CLI="$HOME/.codex/skills/hydrate/scripts/hydrate.py"
-elif [ -f "$HOME/.claude/skills/hydrate/scripts/hydrate.py" ]; then
-  HYDRATE_CLI="$HOME/.claude/skills/hydrate/scripts/hydrate.py"
-elif [ -f "$HOME/.agents/skills/hydrate/scripts/hydrate.py" ]; then
-  HYDRATE_CLI="$HOME/.agents/skills/hydrate/scripts/hydrate.py"
+if [ -n "$CODEX_HOME" ] && [ -f "$CODEX_HOME/skills/hydrate/scripts/hydrate.sh" ]; then
+  HYDRATE_CLI="$CODEX_HOME/skills/hydrate/scripts/hydrate.sh"
+elif [ -f "$HOME/.codex/skills/hydrate/scripts/hydrate.sh" ]; then
+  HYDRATE_CLI="$HOME/.codex/skills/hydrate/scripts/hydrate.sh"
+elif [ -f "$HOME/.claude/skills/hydrate/scripts/hydrate.sh" ]; then
+  HYDRATE_CLI="$HOME/.claude/skills/hydrate/scripts/hydrate.sh"
+elif [ -f "$HOME/.agents/skills/hydrate/scripts/hydrate.sh" ]; then
+  HYDRATE_CLI="$HOME/.agents/skills/hydrate/scripts/hydrate.sh"
 else
-  HYDRATE_CLI="$(find "$HOME" -path '*/skills/hydrate/scripts/hydrate.py' -print -quit 2>/dev/null)"
+  HYDRATE_CLI="$(find "$HOME" -path '*/skills/hydrate/scripts/hydrate.sh' -print -quit 2>/dev/null)"
 fi
 
 if [ -n "$HYDRATE_CLI" ]; then
-  python3 "$HYDRATE_CLI" check --json
+  sh "$HYDRATE_CLI" check --json
 fi
 ```
 
@@ -86,7 +86,7 @@ If the command returns `"due": false`, do not mention hydration.
 If the user's message confirms they drank water, run this before continuing:
 
 ```bash
-python3 "$HYDRATE_CLI" drink --json
+sh "$HYDRATE_CLI" drink --json
 ```
 
 If they provide an amount, pass it as `--amount <ml>`.
@@ -101,15 +101,15 @@ Restart Codex after editing `~/.codex/AGENTS.md`.
 The skill stores local state in:
 
 ```text
-~/.local/share/hydrate/hydrate.sqlite3
+~/.local/share/hydrate/state
 ```
 
 Common settings:
 
 ```bash
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py config set timezone Asia/Kolkata
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py config set reminder_interval_minutes 120
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py config set default_drink_ml 400
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set timezone Asia/Kolkata
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set reminder_interval_minutes 120
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set default_drink_ml 400
 ```
 
 ## CLI
@@ -117,12 +117,12 @@ python3 ~/.agents/skills/hydrate/scripts/hydrate.py config set default_drink_ml 
 Runtime commands:
 
 ```bash
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py init
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py check --json
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py drink --json
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py drink --amount 500 --json
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py status
-python3 ~/.agents/skills/hydrate/scripts/hydrate.py config list
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh init
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh check --json
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh drink --json
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh drink --amount 500 --json
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh status
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh config list
 ```
 
 ## How It Works
@@ -146,8 +146,8 @@ Legacy settings from earlier versions are migrated or removed automatically:
 From the repo root:
 
 ```bash
-python3 -m py_compile skills/hydrate/scripts/hydrate.py
+sh -n skills/hydrate/scripts/hydrate.sh
 python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/hydrate
 ```
 
-The validator requires `PyYAML` in the Python environment.
+The validator requires `PyYAML` in the Python environment. Runtime does not require Python or SQLite.
