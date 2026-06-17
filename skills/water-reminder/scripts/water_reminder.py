@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -21,8 +22,7 @@ DEFAULT_SETTINGS = {
     "work_end": "18:00",
     "timezone": "local",
     "daily_target_ml": "2500",
-    "serving_ml": "400",
-    "minimum_interval_minutes": "120",
+    "reminder_interval_minutes": "120",
 }
 
 CONFIRMATION_SOURCE = "agent-confirmation"
@@ -112,6 +112,7 @@ def initialize(conn: sqlite3.Connection) -> None:
         """
     )
     migrate_drink_events(conn)
+    migrate_settings(conn)
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_drink_events_drank_at_epoch
@@ -124,6 +125,21 @@ def initialize(conn: sqlite3.Connection) -> None:
             (key, value),
         )
     conn.commit()
+
+
+def migrate_settings(conn: sqlite3.Connection) -> None:
+    old_interval = conn.execute(
+        "SELECT value FROM settings WHERE key = 'minimum_interval_minutes'"
+    ).fetchone()
+    new_interval = conn.execute(
+        "SELECT value FROM settings WHERE key = 'reminder_interval_minutes'"
+    ).fetchone()
+    if old_interval and not new_interval:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            ("reminder_interval_minutes", old_interval["value"]),
+        )
+    conn.execute("DELETE FROM settings WHERE key IN ('minimum_interval_minutes', 'serving_ml')")
 
 
 def migrate_drink_events(conn: sqlite3.Connection) -> None:
@@ -253,7 +269,14 @@ def last_drink_at(conn: sqlite3.Connection, start: datetime, end: datetime) -> d
 
 
 def clear_pending(conn: sqlite3.Connection) -> None:
-    for key in ("pending", "pending_since", "suggested_amount_ml", "last_reminder_at"):
+    for key in (
+        "pending",
+        "pending_since",
+        "suggested_amount_ml",
+        "last_reminder_at",
+        "pending_slot",
+        "pending_due_at",
+    ):
         set_state(conn, key, None)
 
 
@@ -271,18 +294,15 @@ def reset_window_if_needed(conn: sqlite3.Connection, cfg: dict[str, str], now: d
     reset_if_new_window(conn, win)
     return win
 
+
 def base_payload(conn: sqlite3.Connection, cfg: dict[str, str], now: datetime, win: Window | None = None) -> dict:
     if win is None:
         win = work_window(cfg, now)
     target = parse_positive_int(cfg["daily_target_ml"], "daily_target_ml")
-    serving = parse_positive_int(cfg["serving_ml"], "serving_ml")
-    interval = parse_positive_int(cfg["minimum_interval_minutes"], "minimum_interval_minutes")
+    interval = parse_positive_int(cfg["reminder_interval_minutes"], "reminder_interval_minutes")
     actual = event_sum(conn, win.start, min(now, win.end))
     remaining = max(target - actual, 0)
-    duration = max((win.end - win.start).total_seconds(), 1)
-    elapsed = min(max((now - win.start).total_seconds(), 0), duration)
-    expected = int(target * (elapsed / duration))
-    gap = max(expected - actual, 0)
+    schedule = reminder_schedule(target, interval, win, now)
 
     return {
         "now": iso(now),
@@ -293,8 +313,8 @@ def base_payload(conn: sqlite3.Connection, cfg: dict[str, str], now: datetime, w
         },
         "settings": {
             "daily_target_ml": target,
-            "serving_ml": serving,
-            "minimum_interval_minutes": interval,
+            "suggested_amount_ml": schedule["suggested_amount_ml"],
+            "reminder_interval_minutes": interval,
             "work_start": cfg["work_start"],
             "work_end": cfg["work_end"],
             "timezone": cfg["timezone"],
@@ -303,17 +323,62 @@ def base_payload(conn: sqlite3.Connection, cfg: dict[str, str], now: datetime, w
             "actual_ml": actual,
             "target_ml": target,
             "remaining_ml": remaining,
-            "expected_ml": expected,
-            "gap_ml": gap,
+            "expected_ml": schedule["expected_ml"],
+            "gap_ml": max(schedule["expected_ml"] - actual, 0),
+        },
+        "schedule": {
+            "slot_count": schedule["slot_count"],
+            "current_slot": schedule["current_slot"],
+            "suggested_amount_ml": schedule["suggested_amount_ml"],
+            "current_slot_due_at": iso(schedule["current_slot_due_at"]) if schedule["current_slot_due_at"] else None,
+            "next_slot_due_at": iso(schedule["next_slot_due_at"]) if schedule["next_slot_due_at"] else None,
         },
     }
 
 
-def should_respect_interval(conn: sqlite3.Connection, win: Window, now: datetime, interval_minutes: int) -> bool:
+def reminder_schedule(target_ml: int, interval_minutes: int, win: Window, now: datetime) -> dict:
+    interval = timedelta(minutes=interval_minutes)
+    due_times = slot_due_times(win, interval)
+    slot_count = len(due_times)
+    suggested_amount = max(1, math.ceil(target_ml / slot_count))
+
+    current_slot = sum(1 for due_at in due_times if now >= due_at)
+    if current_slot <= 0:
+        current_due_at = None
+    else:
+        current_due_at = due_times[current_slot - 1]
+
+    if current_slot < slot_count:
+        next_due_at = due_times[current_slot]
+    else:
+        next_due_at = None
+
+    return {
+        "slot_count": slot_count,
+        "current_slot": current_slot,
+        "suggested_amount_ml": suggested_amount,
+        "current_slot_due_at": current_due_at,
+        "next_slot_due_at": next_due_at,
+        "expected_ml": min(target_ml, suggested_amount * current_slot),
+    }
+
+
+def slot_due_times(win: Window, interval: timedelta) -> list[datetime]:
+    due_times = []
+    due_at = win.start + interval
+    while due_at < win.end:
+        due_times.append(due_at)
+        due_at += interval
+
+    if not due_times:
+        due_times.append(win.start + ((win.end - win.start) / 2))
+
+    return due_times
+
+
+def slot_already_confirmed(conn: sqlite3.Connection, win: Window, now: datetime, due_at: datetime) -> bool:
     latest_drink = last_drink_at(conn, win.start, min(now, win.end))
-    if latest_drink is None:
-        return now - win.start >= timedelta(minutes=interval_minutes)
-    return now - latest_drink >= timedelta(minutes=interval_minutes)
+    return latest_drink is not None and latest_drink >= due_at
 
 
 def check(conn: sqlite3.Connection, now: datetime) -> dict:
@@ -336,7 +401,10 @@ def check(conn: sqlite3.Connection, now: datetime) -> dict:
         return payload
 
     if st.get("pending") == "true":
-        suggested = parse_positive_int(st.get("suggested_amount_ml", cfg["serving_ml"]), "suggested_amount_ml")
+        suggested = parse_positive_int(
+            st.get("suggested_amount_ml", str(payload["schedule"]["suggested_amount_ml"])),
+            "suggested_amount_ml",
+        )
         set_state(conn, "last_reminder_at", iso(now))
         conn.commit()
         payload.update(
@@ -349,18 +417,22 @@ def check(conn: sqlite3.Connection, now: datetime) -> dict:
         )
         return payload
 
-    target = payload["settings"]["daily_target_ml"]
-    serving = payload["settings"]["serving_ml"]
-    interval = payload["settings"]["minimum_interval_minutes"]
-    gap = payload["progress"]["gap_ml"]
+    serving = payload["schedule"]["suggested_amount_ml"]
     remaining = payload["progress"]["remaining_ml"]
-    due = remaining > 0 and gap >= serving and should_respect_interval(conn, win, now, interval)
+    due_at_raw = payload["schedule"]["current_slot_due_at"]
+    due_at = datetime.fromisoformat(due_at_raw) if due_at_raw else None
+    due = (
+        remaining > 0
+        and due_at is not None
+        and now >= due_at
+        and not slot_already_confirmed(conn, win, now, due_at)
+    )
 
     if not due:
         payload.update(
             {
                 "due": False,
-                "reason": "on_track",
+                "reason": "waiting_for_next_slot",
                 "suggested_amount_ml": 0,
                 "message": "",
             }
@@ -372,12 +444,14 @@ def check(conn: sqlite3.Connection, now: datetime) -> dict:
     set_state(conn, "pending_since", iso(now))
     set_state(conn, "last_reminder_at", iso(now))
     set_state(conn, "suggested_amount_ml", str(suggested))
+    set_state(conn, "pending_slot", str(payload["schedule"]["current_slot"]))
+    set_state(conn, "pending_due_at", due_at_raw)
     conn.commit()
 
     payload.update(
         {
             "due": True,
-            "reason": "behind_sliding_window",
+            "reason": "scheduled_interval_due",
             "suggested_amount_ml": suggested,
             "message": f"DRINK WATER NOW: {suggested}ml",
         }
@@ -389,8 +463,8 @@ def drink(conn: sqlite3.Connection, now: datetime, amount: int | None) -> dict:
     cfg = settings(conn)
     reset_window_if_needed(conn, cfg, now)
     st = state(conn)
-    serving = parse_positive_int(cfg["serving_ml"], "serving_ml")
-    suggested = int(st.get("suggested_amount_ml", serving))
+    payload = base_payload(conn, cfg, now)
+    suggested = int(st.get("suggested_amount_ml", payload["schedule"]["suggested_amount_ml"]))
     consumed = amount if amount is not None else suggested
     if consumed <= 0:
         raise SystemExit("amount must be greater than zero")
@@ -403,7 +477,6 @@ def drink(conn: sqlite3.Connection, now: datetime, amount: int | None) -> dict:
     set_state(conn, "last_drink_at", iso(now))
     conn.commit()
 
-    payload = base_payload(conn, cfg, now)
     payload.update(
         {
             "recorded": True,
@@ -427,17 +500,24 @@ def status(conn: sqlite3.Connection, now: datetime) -> dict:
     return payload
 
 
-def validate_setting(key: str, value: str) -> str:
+def normalize_setting_key(key: str) -> str:
+    if key == "minimum_interval_minutes":
+        return "reminder_interval_minutes"
+    return key
+
+
+def validate_setting(key: str, value: str) -> tuple[str, str]:
+    key = normalize_setting_key(key)
     if key not in DEFAULT_SETTINGS:
         allowed = ", ".join(sorted(DEFAULT_SETTINGS))
         raise SystemExit(f"Unknown setting '{key}'. Allowed: {allowed}")
     if key in ("work_start", "work_end"):
         parse_local_time(value, key)
-    if key in ("daily_target_ml", "serving_ml", "minimum_interval_minutes"):
+    if key in ("daily_target_ml", "reminder_interval_minutes"):
         parse_positive_int(value, key)
     if key == "timezone" and value != "local":
         configured_zone(value)
-    return value
+    return key, value
 
 
 def write_json(payload: dict) -> None:
@@ -499,22 +579,23 @@ def main() -> int:
             return 0
         if args.config_command == "get":
             payload = settings(conn)
-            value = payload.get(args.key)
+            key = normalize_setting_key(args.key)
+            value = payload.get(key)
             if value is None:
                 raise SystemExit(f"Unknown setting: {args.key}")
-            write_json({args.key: value}) if args.json else print(value)
+            write_json({key: value}) if args.json else print(value)
             return 0
         if args.config_command == "set":
-            value = validate_setting(args.key, args.value)
+            key, value = validate_setting(args.key, args.value)
             conn.execute(
                 "INSERT INTO settings (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (args.key, value),
+                (key, value),
             )
             clear_pending(conn)
             conn.commit()
-            payload = {"updated": True, "key": args.key, "value": value}
-            write_json(payload) if args.json else print(f"{args.key}={value}")
+            payload = {"updated": True, "key": key, "value": value}
+            write_json(payload) if args.json else print(f"{key}={value}")
             return 0
 
     raise SystemExit(f"Unhandled command: {args.command}")
