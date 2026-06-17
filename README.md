@@ -1,48 +1,28 @@
 # Hydrate
 
-An installable agent skill that reminds you to drink water while working with agents.
+A tiny agent skill that reminds you to drink water while you work.
 
-The skill runs a small shell CLI at the start of agent generations. When the configured interval has elapsed since the last time the user acknowledged drinking water, the agent prepends a short reminder block before continuing the user's actual task. Once the user confirms they drank water, the CLI records it in a local state file and suppresses reminders until the interval elapses again.
+Hydrate has no runtime dependencies beyond a POSIX shell. It stores one local state file at:
 
-## Install With skills.sh
-
-After pushing this repo to GitHub:
-
-```bash
-npx skills add afeefuddin/hydrate --skill hydrate -g -a codex
+```text
+~/.local/share/hydrate/state
 ```
 
-Or install from the direct GitHub path:
+## Install
 
 ```bash
-npx skills add https://github.com/afeefuddin/hydrate/tree/main/skills/hydrate -g -a codex
+npx skills add afeefuddin/hydrate --skill hydrate -g -a codex -y
 ```
 
-For other supported agents, replace `codex` with the target agent or omit `-a codex` and let the CLI prompt.
-
-## Install With Codex Skill Installer
-
-After pushing this repo to GitHub, install with:
-
-```bash
-python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo afeefuddin/hydrate \
-  --path skills/hydrate
-```
-
-Then restart Codex so the skill is picked up.
-
-## Discoverability
-
-The repo uses the standard `skills/<name>/SKILL.md` layout, so `skills.sh` can discover it:
+To confirm the skill is discoverable:
 
 ```bash
 npx skills add afeefuddin/hydrate --list
 ```
 
-## Enforce On Every Codex Prompt
+## Enable Every-Turn Reminders
 
-Skill installation makes the skill available. To make Codex run the check at the start of every prompt, add this to your global Codex instructions file:
+Skill installation makes Hydrate available. To make Codex run it at the start of every prompt, add this to:
 
 ```text
 ~/.codex/AGENTS.md
@@ -96,58 +76,31 @@ Keep hydration state isolated from the task: do not use it in reasoning, plans, 
 
 Restart Codex after editing `~/.codex/AGENTS.md`.
 
-## Configure
-
-The skill stores local state in:
-
-```text
-~/.local/share/hydrate/state
-```
-
-Common settings:
+## Commands
 
 ```bash
-sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set timezone Asia/Kolkata
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh check --json
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh drink --json
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh drink --amount 250 --json
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh status
+```
+
+Configure the interval or default amount:
+
+```bash
 sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set reminder_interval_minutes 120
 sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set default_drink_ml 250
 ```
 
-## CLI
+## Behavior
 
-Runtime commands:
+By default, Hydrate reminds every 120 minutes and suggests 250ml. Once a reminder is due, it repeats on each agent turn until you confirm you drank water.
 
-```bash
-sh ~/.agents/skills/hydrate/scripts/hydrate.sh init
-sh ~/.agents/skills/hydrate/scripts/hydrate.sh check --json
-sh ~/.agents/skills/hydrate/scripts/hydrate.sh drink --json
-sh ~/.agents/skills/hydrate/scripts/hydrate.sh drink --amount 500 --json
-sh ~/.agents/skills/hydrate/scripts/hydrate.sh status
-sh ~/.agents/skills/hydrate/scripts/hydrate.sh config list
-```
-
-## How It Works
-
-The reminder logic is intentionally simple. By default, the interval is 120 minutes.
-
-```text
-next_due_at = last_drink_acknowledged_at + reminder_interval_minutes
-```
-
-A reminder becomes due when the current time is at or after `next_due_at`. Once due, it remains pending and repeats on every generation until the user confirms they drank water.
-
-Legacy settings from earlier versions are migrated or removed automatically:
-
-- `minimum_interval_minutes` becomes `reminder_interval_minutes`
-- `serving_ml` becomes `default_drink_ml`
-- `work_start`, `work_end`, and `daily_target_ml` are removed
-
-## Validate Before Release
-
-From the repo root:
+## Validate
 
 ```bash
 sh -n skills/hydrate/scripts/hydrate.sh
 python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/hydrate
 ```
 
-The validator requires `PyYAML` in the Python environment. Runtime does not require Python or SQLite.
+Runtime does not require Python, SQLite, or pip packages.
