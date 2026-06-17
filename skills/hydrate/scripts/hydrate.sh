@@ -114,7 +114,7 @@ mkdir -p "$state_dir"
 
 timezone="local"
 reminder_interval_minutes="120"
-default_drink_ml="400"
+default_drink_ml="250"
 last_drink_at_epoch=""
 last_drink_at=""
 last_amount_ml=""

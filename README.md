@@ -109,7 +109,7 @@ Common settings:
 ```bash
 sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set timezone Asia/Kolkata
 sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set reminder_interval_minutes 120
-sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set default_drink_ml 400
+sh ~/.agents/skills/hydrate/scripts/hydrate.sh config set default_drink_ml 250
 ```
 
 ## CLI
